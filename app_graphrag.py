@@ -27,7 +27,7 @@ def embedding_model():
 
 def pages_from_pdf(data):
     reader = PdfReader(data)
-    return [{"page": i, "text": re.sub(r"\\s+", " ", p.extract_text() or "").strip()}
+    return [{"page": i, "text": re.sub(r"\s+", " ", p.extract_text() or "").strip()}
             for i, p in enumerate(reader.pages, 1)]
 
 def make_chunks(pages, document, size=1200, overlap=200):
@@ -50,7 +50,8 @@ def make_chunks(pages, document, size=1200, overlap=200):
 def make_embeddings(chunks):
     if not chunks:
         return np.empty((0, 384))
-    return np.asarray(embedding_model().encode(
+    model = embedding_model()
+    return np.asarray(model.encode(
         [x["text"] for x in chunks],
         normalize_embeddings=True,
         show_progress_bar=False,
@@ -74,12 +75,17 @@ def build_graph(chunks):
             stats["raw_facts"] += len(facts)
             stats["valid_facts"] += len(linked)
             stats["rejected"] += len(rejected)
-        except Exception:
-            pass
+        except Exception as e:
+            stats.setdefault("errors", []).append({
+                "page": chunk.get("page"),
+                "chunk": chunk.get("chunk"),
+                "error": str(e),
+            })
         progress.progress(i / len(chunks))
     progress.empty()
     stats["nodes"] = graph.number_of_nodes()
     stats["edges"] = graph.number_of_edges()
+    stats["errors_count"] = len(stats.get("errors", []))
     return graph, stats
 
 
@@ -278,19 +284,44 @@ for key, default in {
 
 uploaded = st.file_uploader("Upload construction specification PDF", type=["pdf"], key="graphrag_pdf")
 
-if uploaded and st.button("Process Document", type="primary"):
-    pages = pages_from_pdf(uploaded)
-    if not any(p["text"] for p in pages):
-        st.error("The PDF does not contain readable text.")
-        st.stop()
-    st.session_state.pdf_name = uploaded.name
-    st.session_state.chunks = make_chunks(pages, uploaded.name)
-    with st.spinner("Building semantic index..."):
-        st.session_state.embeddings = make_embeddings(st.session_state.chunks)
-    st.session_state.graph = None
-    st.session_state.method = None
-    st.session_state.history = []
-    st.success("Document processed successfully.")
+if uploaded and st.button("Process Document", type="primary", key="process_document"):
+    try:
+        pdf_bytes = uploaded.getvalue()
+        if not pdf_bytes:
+            st.error("The uploaded PDF is empty.")
+            st.stop()
+
+        with st.spinner("Reading construction specification..."):
+            pages = pages_from_pdf(pdf_bytes)
+
+        if not pages or not any(p["text"] for p in pages):
+            st.error("The PDF does not contain readable text.")
+            st.stop()
+
+        chunks = make_chunks(pages, uploaded.name)
+        if not chunks:
+            st.error("No readable text chunks could be created from this PDF.")
+            st.stop()
+
+        with st.spinner(f"Building semantic index from {len(chunks)} chunks..."):
+            embeddings = make_embeddings(chunks)
+
+        if embeddings is None or len(embeddings) != len(chunks):
+            st.error("Semantic indexing did not produce a valid embedding for every chunk.")
+            st.stop()
+
+        st.session_state.pdf_name = uploaded.name
+        st.session_state.chunks = chunks
+        st.session_state.embeddings = embeddings
+        st.session_state.graph = None
+        st.session_state.graph_stats = None
+        st.session_state.method = None
+        st.session_state.history = []
+        st.success(f"Document processed successfully — {len(pages)} pages, {len(chunks)} chunks indexed.")
+
+    except Exception as e:
+        st.error("Document processing failed.")
+        st.exception(e)
 
 if st.session_state.chunks:
     a,b,c = st.columns(3)
@@ -303,10 +334,20 @@ if st.session_state.chunks:
 
     if st.session_state.graph is None and st.button("Build Knowledge Graph", type="primary"):
         try:
-            st.session_state.graph, st.session_state.graph_stats = build_graph(st.session_state.chunks)
+            with st.spinner("Extracting entities and relationships with Llama 3..."):
+                st.session_state.graph, st.session_state.graph_stats = build_graph(st.session_state.chunks)
             path = Path(tempfile.mkdtemp()) / f"{Path(st.session_state.pdf_name).stem}_graph.json"
             GraphStore().save(st.session_state.graph, path)
-            st.success(f"Graph built and stored locally: {path.name}")
+            s = st.session_state.graph_stats
+            if s.get("errors_count", 0):
+                st.warning(f"Graph built with {s['errors_count']} chunk-level extraction errors. Valid evidence was retained; failed chunks were skipped.")
+                with st.expander("Graph extraction errors"):
+                    for item in s.get("errors", [])[:20]:
+                        st.write(f"Page {item['page']} · {item['chunk']}: {item['error']}")
+            if s.get("nodes", 0) == 0:
+                st.error("No knowledge-graph entities were extracted. Check that Ollama is running and the Llama 3 model is available.")
+            else:
+                st.success(f"Graph built and stored locally: {path.name}")
         except Exception as e:
             st.error(f"Graph construction failed: {e}")
 
