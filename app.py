@@ -1,5 +1,6 @@
 import re
 import json
+from io import BytesIO
 import streamlit as st
 import streamlit.components.v1 as components
 from pypdf import PdfReader
@@ -14,7 +15,7 @@ from validator.fact_validator import validate_facts
 st.set_page_config(page_title="DocMindAI — Knowledge Graph", layout="wide")
 
 def pages_from_pdf(data):
-    reader = PdfReader(data)
+    reader = PdfReader(BytesIO(data))
     return [
         {
             "page": i,
