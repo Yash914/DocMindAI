@@ -1,112 +1,56 @@
 from llm.llm_client import generate_json
 
-
 EXTRACTION_PROMPT = """
-You are a high-precision technical document knowledge extraction system.
+You are a high-precision construction specification knowledge extraction system.
 
-Extract ONLY information explicitly supported by the provided document chunk.
+Extract ONLY information explicitly supported by the supplied document chunk.
 
-Do not invent information.
-
-Extract:
-
-1. Important entities
-2. Explicit facts/relationships between those entities
-
-Allowed entity types:
-
+Entities:
+- Activity
 - Material
+- Equipment
 - Standard
+- Requirement
+- Test
+- Approval
+- Section
+- Role
 - Organization
 - Person
-- Role
-- Process
-- Equipment
-- Test
 - Property
 - Measurement
 - Document
 - Location
-- Requirement
+- Process
 
-For every fact provide:
+Extract explicit relationships. Prefer these normalized predicates:
+REQUIRES, USES, REFERENCES, APPLIES_TO, REQUIRES_APPROVAL, DEFINED_IN,
+CONFORMS_TO, TESTED_BY, TESTED_AT, APPROVED_BY, HAS_PROPERTY, SPECIFIES,
+PART_OF, COVERED_BY, STORED_AT, STORED_SEPARATELY, TESTED_FOR, MAY_BE_USED.
 
-- subject
-- predicate
-- object
-- evidence
-
-The evidence MUST come directly from the provided document chunk.
-
-Do not create a fact if the relationship is uncertain.
-
-Use short normalized predicates such as:
-
-CONFORMS_TO
-REQUIRES
-TESTED_BY
-TESTED_AT
-APPROVED_BY
-USES
-HAS_PROPERTY
-SPECIFIES
-PART_OF
-APPLIES_TO
-REFERENCES
-STORED_SEPARATELY
-REVIEWED_WHEN
-MODIFIED_WHEN
-IDENTIFIED_BY
-COVERED_BY
-TESTED_FOR
-MAY_BE_USED
-
-Return ONLY valid JSON.
-
-Use exactly this structure:
+Every fact MUST include exact supporting evidence from the chunk.
+Do not create uncertain facts.
+Return ONLY valid JSON:
 
 {
-  "entities": [
-    {
-      "name": "entity name",
-      "type": "entity type"
-    }
-  ],
-  "facts": [
-    {
-      "subject": "subject",
-      "predicate": "NORMALIZED_PREDICATE",
-      "object": "object",
-      "evidence": "exact supporting text"
-    }
-  ]
+  "entities": [{"name": "...", "type": "..."}],
+  "facts": [{
+    "subject": "...",
+    "predicate": "NORMALIZED_PREDICATE",
+    "object": "...",
+    "evidence": "exact supporting text"
+  }]
 }
 
 DOCUMENT CHUNK:
 """
 
-
 def extract_knowledge(text):
-
     if not text or not text.strip():
-        return {
-            "entities": [],
-            "facts": []
-        }
-
-    prompt = EXTRACTION_PROMPT + "\n" + text
-
-    result = generate_json(prompt)
-
+        return {"entities": [], "facts": []}
+    result = generate_json(EXTRACTION_PROMPT + "\n" + text)
     if not isinstance(result, dict):
-        raise ValueError(
-            "LLM did not return a JSON object."
-        )
-
-    if "entities" not in result:
-        result["entities"] = []
-
-    if "facts" not in result:
-        result["facts"] = []
-
+        raise ValueError("LLM did not return a JSON object.")
+    result.setdefault("entities", [])
+    result.setdefault("facts", [])
     return result
