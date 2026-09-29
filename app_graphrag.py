@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import streamlit as st
+import streamlit.components.v1 as components
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 import ollama
@@ -80,6 +81,79 @@ def build_graph(chunks):
     stats["nodes"] = graph.number_of_nodes()
     stats["edges"] = graph.number_of_edges()
     return graph, stats
+
+
+def render_interactive_graph(graph):
+    """Professional interactive SVG view of the actual NetworkX GraphRAG graph."""
+    nodes = [
+        {"id": n, "name": d.get("name", n), "type": d.get("entity_type", "Entity")}
+        for n, d in graph.graph.nodes(data=True)
+    ]
+    edges = [
+        {
+            "source": u,
+            "target": v,
+            "relation": d.get("relation", "RELATED_TO"),
+            "confidence": float(d.get("confidence", 0.0)),
+            "document": d.get("document", ""),
+            "page": d.get("page", ""),
+            "chunk": d.get("chunk_id", ""),
+            "evidence": d.get("evidence", ""),
+        }
+        for u, v, d in graph.graph.edges(data=True)
+    ]
+    payload = json.dumps({"nodes": nodes, "edges": edges})
+
+    html = """<!doctype html><html><head><meta charset="utf-8">
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#172033;background:#fff}
+.shell{border:1px solid #d9dee7;border-radius:8px;overflow:hidden;background:#fff}
+.toolbar{height:48px;display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #e4e7ec;background:#fafbfc}
+button{border:1px solid #cfd5df;background:#fff;color:#263247;border-radius:5px;padding:6px 10px;font-size:13px;cursor:pointer}
+button:hover{background:#f1f4f8}.status{margin-left:auto;color:#667085;font-size:12px}
+.main{display:flex;min-height:610px}.viewport{flex:1;min-width:0;height:610px;overflow:hidden;background:#fcfcfd}
+svg{width:100%;height:100%;display:block;cursor:grab}svg.dragging{cursor:grabbing}
+.edge{stroke:#98a2b3;fill:none}.edge-label{font-size:10px;fill:#667085;text-anchor:middle;pointer-events:none}
+.node{stroke:#fff;stroke-width:2;cursor:pointer}.node-label{font-size:11px;font-weight:600;fill:#344054;text-anchor:middle;pointer-events:none}
+.detail{width:285px;border-left:1px solid #e4e7ec;background:#fff;padding:18px}
+.detail h3{margin:0 0 5px;font-size:15px;color:#101828}.detail .type{color:#667085;font-size:12px;margin-bottom:18px}
+.row{padding:9px 0;border-top:1px solid #edf0f4}.label{display:block;color:#667085;font-size:11px;margin-bottom:3px;text-transform:uppercase;letter-spacing:.04em}
+.value{color:#1d2939;font-size:13px;line-height:1.4;word-break:break-word}.conf{font-weight:700;color:#175cd3}
+.legend{display:flex;gap:14px;flex-wrap:wrap;padding:9px 12px;border-bottom:1px solid #e4e7ec;color:#667085;font-size:11px}
+.dot{width:8px;height:8px;display:inline-block;border-radius:50%;margin-right:4px}.note{padding:9px 12px;font-size:11px;color:#667085;border-top:1px solid #e4e7ec}
+</style></head><body><div class="shell">
+<div class="toolbar"><button id="zin">Zoom in</button><button id="zout">Zoom out</button><button id="fit">Fit graph</button><button id="reset">Reset</button><span class="status" id="status"></span></div>
+<div class="legend"><span><i class="dot" style="background:#3b82f6"></i>Activity</span><span><i class="dot" style="background:#16a34a"></i>Material</span><span><i class="dot" style="background:#d97706"></i>Equipment</span><span><i class="dot" style="background:#7c3aed"></i>Standard</span><span><i class="dot" style="background:#dc2626"></i>Requirement</span><span><i class="dot" style="background:#64748b"></i>Other</span></div>
+<div class="main"><div class="viewport"><svg id="graph" viewBox="0 0 1000 650"></svg></div><aside class="detail" id="detail"><h3>Knowledge Graph</h3><div class="type">Select a node or relationship</div><div class="row"><span class="label">Interaction</span><span class="value">Drag nodes, scroll to zoom, and select a relationship for provenance.</span></div></aside></div>
+<div class="note">Confidence represents evidence support for the extracted relationship; it is not a statistical probability.</div></div>
+<script>
+const DATA=__DATA__;
+const svg=document.getElementById("graph"),detail=document.getElementById("detail"),status=document.getElementById("status"),ns="http://www.w3.org/2000/svg";
+const colors={Activity:"#3b82f6",Material:"#16a34a",Equipment:"#d97706",Standard:"#7c3aed",Requirement:"#dc2626"};
+let scale=1,ox=0,oy=0,drag=null;
+const nodes=DATA.nodes.map(n=>Object.assign({},n,{x:0,y:0})),map=Object.fromEntries(nodes.map(n=>[n.id,n])),edges=DATA.edges;
+function init(){nodes.forEach((n,i)=>{const a=i*2.399963,r=150+Math.min(180,i*6);n.x=500+Math.cos(a)*r;n.y=325+Math.sin(a)*r*.72});}
+function esc(s){return String(s||"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));}
+function render(){
+ svg.innerHTML="";const g=document.createElementNS(ns,"g");g.setAttribute("transform","translate("+ox+","+oy+") scale("+scale+")");svg.appendChild(g);
+ edges.forEach(e=>{const a=map[e.source],b=map[e.target];if(!a||!b)return;
+  const l=document.createElementNS(ns,"line");l.classList.add("edge");l.setAttribute("x1",a.x);l.setAttribute("y1",a.y);l.setAttribute("x2",b.x);l.setAttribute("y2",b.y);l.style.strokeWidth=String(1+e.confidence*2);l.style.opacity=String(.35+e.confidence*.55);l.onclick=x=>{x.stopPropagation();showEdge(e,a,b)};g.appendChild(l);
+  const t=document.createElementNS(ns,"text");t.classList.add("edge-label");t.setAttribute("x",(a.x+b.x)/2);t.setAttribute("y",(a.y+b.y)/2-5);t.textContent=e.relation+" · "+Math.round(e.confidence*100)+"%";g.appendChild(t);
+ });
+ nodes.forEach(n=>{const c=document.createElementNS(ns,"circle");c.classList.add("node");c.setAttribute("cx",n.x);c.setAttribute("cy",n.y);c.setAttribute("r",24);c.setAttribute("fill",colors[n.type]||"#64748b");c.onpointerdown=e=>{drag={n:n,x:e.clientX,y:e.clientY};e.stopPropagation()};c.onclick=e=>{e.stopPropagation();showNode(n)};g.appendChild(c);
+  const t=document.createElementNS(ns,"text");t.classList.add("node-label");t.setAttribute("x",n.x);t.setAttribute("y",n.y+40);t.textContent=n.name.length>27?n.name.slice(0,25)+"…":n.name;g.appendChild(t);
+ });
+ status.textContent=nodes.length+" nodes · "+edges.length+" relationships";
+}
+function showNode(n){const links=edges.filter(e=>e.source===n.id||e.target===n.id);detail.innerHTML="<h3>"+esc(n.name)+"</h3><div class='type'>"+esc(n.type)+"</div>"+links.slice(0,12).map(e=>"<div class='row'><span class='label'>"+esc(e.relation)+"</span><span class='value conf'>"+Math.round(e.confidence*100)+"% confidence</span><span class='value'>"+esc(e.document)+" · Page "+esc(e.page)+" · "+esc(e.chunk)+"</span></div>").join("");}
+function showEdge(e,a,b){detail.innerHTML="<h3>"+esc(e.relation)+"</h3><div class='type'>"+esc(a.name)+" → "+esc(b.name)+"</div><div class='row'><span class='label'>Confidence</span><span class='value conf'>"+Math.round(e.confidence*100)+"%</span></div><div class='row'><span class='label'>Source</span><span class='value'>"+esc(e.document)+"<br>Page "+esc(e.page)+" · "+esc(e.chunk)+"</span></div><div class='row'><span class='label'>Evidence</span><span class='value'>"+esc(e.evidence)+"</span></div>";}
+svg.onpointermove=e=>{if(!drag)return;drag.n.x+=(e.clientX-drag.x)/scale;drag.n.y+=(e.clientY-drag.y)/scale;drag.x=e.clientX;drag.y=e.clientY;render()};svg.onpointerup=()=>drag=null;svg.onpointerleave=()=>drag=null;
+svg.onwheel=e=>{e.preventDefault();scale=Math.max(.45,Math.min(2.2,scale*(e.deltaY<0?1.1:.9)));render()}; 
+function fit(){if(!nodes.length)return;const xs=nodes.map(n=>n.x),ys=nodes.map(n=>n.y),minx=Math.min(...xs),maxx=Math.max(...xs),miny=Math.min(...ys),maxy=Math.max(...ys);scale=Math.min(.95,Math.min(900/Math.max(1,maxx-minx),560/Math.max(1,maxy-miny)));ox=500-(minx+maxx)*scale/2;oy=325-(miny+maxy)*scale/2;render();}
+document.getElementById("zin").onclick=()=>{scale=Math.min(2.2,scale*1.2);render()};document.getElementById("zout").onclick=()=>{scale=Math.max(.45,scale/1.2);render()};document.getElementById("fit").onclick=fit;document.getElementById("reset").onclick=()=>{scale=1;ox=0;oy=0;init();render()};init();render();fit();
+</script></body></html>"""
+    html = html.replace("__DATA__", payload)
+    components.html(html, height=700, scrolling=False)
 
 def search(query):
     return GraphRAGRetriever(
@@ -243,6 +317,10 @@ if st.session_state.chunks:
         b.metric("Graph Edges", s["edges"])
         c.metric("Valid Facts", s["valid_facts"])
         d.metric("Rejected Facts", s["rejected"])
+
+        st.subheader("Interactive Knowledge Graph")
+        st.caption("Drag nodes • scroll to zoom • select a relationship for confidence and document provenance.")
+        render_interactive_graph(st.session_state.graph)
 
         with st.expander("Graph relationships"):
             for i,(u,v,data) in enumerate(st.session_state.graph.graph.edges(data=True)):
